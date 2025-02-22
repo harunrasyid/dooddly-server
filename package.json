@@ -1,0 +1,16 @@
+{
+  "name": "dooddly-server",
+  "version": "1.0.0",
+  "description": "Server for dooddly-client",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "author": "harunar21",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
