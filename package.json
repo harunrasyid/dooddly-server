@@ -11,6 +11,7 @@
   "license": "MIT",
   "dependencies": {
     "express": "^4.21.2",
+    "prettier": "^3.5.3",
     "socket.io": "^4.8.1"
   }
 }
