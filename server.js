@@ -1,72 +1,165 @@
 const express = require("express");
 const cors = require("cors");
+const http = require("http");
+const { Server } = require("socket.io");
 
 const app = express();
-const server = require("http").createServer(app);
-const { Server } = require("socket.io");
+const server = http.createServer(app);
 
 app.use(
   cors({
-    origin: "http://localhost:5173", // Change this based on your frontend port
+    origin: "http://localhost:5173",
     methods: ["GET", "POST"],
   }),
 );
 
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173", // Must match frontend
+    origin: "http://localhost:5173",
     methods: ["GET", "POST"],
   },
 });
+
+/**
+ * @typedef {Object} Room
+ * @property {Array<Object>} history - Stores the drawing history.
+ * @property {Array<Object>} redoStack - Stores redo actions.
+ */
 const rooms = {};
 
+/**
+ * Handles all socket events when a user connects.
+ * @param {import("socket.io").Socket} socket - The connected socket instance.
+ */
 io.on("connection", (socket) => {
-  console.log("A user connected:", socket.id);
+  console.log(`User connected: ${socket.id}`);
 
-  socket.on("userJoinRoom", (data) => {
-    const { name, roomCode: code, userId, host, presenter } = data;
+  /**
+   * Handles room creation or joining.
+   * @event userCreateRoom
+   * @param {Object} data
+   * @param {string} data.roomCode - The room code to join.
+   */
+  socket.on("userCreateRoom", ({ roomCode }) => {
+    if (!roomCode) return;
 
-    socket.join(code);
-    if (!rooms[code]) rooms[code] = { history: [], redoStack: [] };
+    socket.join(roomCode);
+    rooms[roomCode] = rooms[roomCode] || { history: [], redoStack: [] };
 
     socket.emit("userIsJoined", { success: true });
-    // Send existing drawing history
-    socket.emit("loadHistory", rooms[code].history);
+    console.log(`Room created/joined: ${roomCode} by ${socket.id}`);
   });
 
-  // socket.on("joinRoom", (room) => {
-  //   socket.join(room);
-  //   if (!rooms[room]) rooms[room] = { history: [], redoStack: [] };
-  //
-  //   // Send existing drawing history
-  //   socket.emit("loadHistory", rooms[room].history);
-  // });
+  /**
+   * Handles user joining an existing room.
+   * @event userJoinRoom
+   * @param {Object} data
+   * @param {string} data.roomCode - The room code to join.
+   */
+  socket.on("userJoinRoom", ({ roomCode }) => {
+    if (!roomCode) return;
 
+    socket.join(roomCode);
+    socket.emit("userIsJoined", { success: true });
+    console.log(`User ${socket.id} joined room: ${roomCode}`);
+  });
+
+  /**
+   * Sends drawing history and redo stack for a room.
+   * @event loadHistory
+   * @param {string} roomCode - The room code.
+   */
+  socket.on("loadHistory", (roomCode) => {
+    if (!rooms[roomCode]) return;
+
+    socket.emit("loadHistory", {
+      history: rooms[roomCode]?.history || [],
+      redoStack: rooms[roomCode]?.redoStack || [],
+    });
+  });
+
+  /**
+   * Handles drawing action.
+   * @event draw
+   * @param {Object} data
+   * @param {string} data.room - The room code.
+   * @param {Object} data.drawData - Drawing data.
+   */
   socket.on("draw", ({ room, drawData }) => {
+    if (!rooms[room]) return;
+
     rooms[room].history.push(drawData);
-    rooms[room].redoStack = []; // Clear redo on new draw
+    rooms[room].redoStack = []; // Clear redo stack on new draw
+
     socket.to(room).emit("draw", drawData);
+    console.log(`Draw event in room: ${room} by ${socket.id}`);
   });
 
+  /**
+   * Handles undo action.
+   * @event undo
+   * @param {string} room - The room code.
+   */
   socket.on("undo", (room) => {
-    if (rooms[room]?.history.length > 0) {
-      const lastAction = rooms[room].history.pop();
-      rooms[room].redoStack.push(lastAction);
-      io.to(room).emit("loadHistory", rooms[room].history);
-    }
+    if (!rooms[room]?.history.length) return;
+
+    const lastAction = rooms[room].history.pop();
+    rooms[room].redoStack.push(lastAction);
+
+    io.to(room).emit("loadHistory", {
+      history: rooms[room].history,
+      redoStack: rooms[room].redoStack,
+    });
+
+    console.log(`Undo in room: ${room} by ${socket.id}`);
   });
 
+  /**
+   * Handles redo action.
+   * @event redo
+   * @param {string} room - The room code.
+   */
   socket.on("redo", (room) => {
-    if (rooms[room]?.redoStack.length > 0) {
-      const redoAction = rooms[room].redoStack.pop();
-      rooms[room].history.push(redoAction);
-      io.to(room).emit("loadHistory", rooms[room].history);
-    }
+    if (!rooms[room]?.redoStack.length) return;
+
+    const redoAction = rooms[room].redoStack.pop();
+    rooms[room].history.push(redoAction);
+
+    io.to(room).emit("loadHistory", {
+      history: rooms[room].history,
+      redoStack: rooms[room].redoStack,
+    });
+
+    console.log(`Redo in room: ${room} by ${socket.id}`);
   });
 
+  /**
+   * Handles clearing all drawing history and redo stack for a room.
+   * @event clear
+   * @param {string} room - The room code.
+   */
+  socket.on("clear", (room) => {
+    if (!rooms[room]) return;
+
+    rooms[room].history = [];
+    rooms[room].redoStack = [];
+
+    io.to(room).emit("loadHistory", {
+      history: [],
+      redoStack: [],
+    });
+
+    console.log(`Clear history in room: ${room} by ${socket.id}`);
+  });
+
+  /**
+   * Handles user disconnection.
+   * @event disconnect
+   */
   socket.on("disconnect", () => {
-    console.log("User disconnected:", socket.id);
+    console.log(`User disconnected: ${socket.id}`);
   });
 });
 
-server.listen(4000, () => console.log("Server running on port 4000"));
+const PORT = 4000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
